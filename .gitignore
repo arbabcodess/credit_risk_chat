@@ -1,0 +1,18 @@
+# Virtual environment
+venv/
+.env
+__pycache__/
+*.pyc
+
+# Data / outputs
+data/
+*.csv
+
+# Hugging Face local cache / secrets
+.hf_cache.json
+*.ckpt
+*.safetensors
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -48,27 +48,45 @@ def login_ui():
 
     if auth["logged_in"]:
         st.sidebar.markdown(
-            f"**Signed in as:** {auth['display_name']}  •  _{auth['role'].upper()}_")
+            f"**Signed in as:** {auth['display_name']}  •  _{auth['role'].upper()}_"
+        )
         if st.sidebar.button("Logout"):
             logout()
-            st.experimental_rerun()
+            # ✅ safe rerun
+            try:
+                from streamlit.runtime.scriptrunner import script_runner
+                script_runner.request_rerun()
+            except Exception:
+                try:
+                    st.rerun()
+                except Exception:
+                    st.session_state._need_rerun = not st.session_state.get("_need_rerun", False)
         return True
 
     st.sidebar.header("🔐 Sign in")
     username = st.sidebar.text_input("Username")
     password = st.sidebar.text_input("Password", type="password")
+
     if st.sidebar.button("Sign in"):
         success = authenticate(username.strip(), password)
         if success:
-            st.experimental_rerun()
+            # ✅ safe rerun again
+            try:
+                from streamlit.runtime.scriptrunner import script_runner
+                script_runner.request_rerun()
+            except Exception:
+                try:
+                    st.rerun()
+                except Exception:
+                    st.session_state._need_rerun = not st.session_state.get("_need_rerun", False)
         else:
             st.session_state.auth["login_error"] = "Invalid username or password."
 
     if st.session_state.auth.get("login_error"):
         st.sidebar.error(st.session_state.auth["login_error"])
+
     st.sidebar.markdown("---")
-    st.sidebar.write(
-        "Demo accounts: `analyst` / `analyst123`, `cro` / `cro123`")
+    st.sidebar.write("Demo accounts: `analyst` / `analyst123`, `cro` / `cro123`")
     return False
 
 
