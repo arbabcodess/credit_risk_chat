@@ -1,52 +1,68 @@
-from transformers import pipeline
+import os
+import requests
+import json
 
-# ---------------------------------------------------------
-# Lightweight model for Hugging Face Spaces / local testing
-# ---------------------------------------------------------
-# "facebook/blenderbot-400M-distill" → small, quick, works on CPU
-# You can also try "tiiuae/falcon-1b" if you want something a bit smarter (≈1 GB)
-# ---------------------------------------------------------
+# ✅ Updated to use the correct v1 chat completions endpoint
+MODEL_NAME = "meta-llama/Meta-Llama-3-8B-Instruct"
+API_URL = "https://router.huggingface.co/v1/chat/completions"
+API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
-MODEL_NAME = "facebook/blenderbot-400M-distill"
+if not API_TOKEN:
+    print("❌ ERROR: Environment variable HUGGINGFACEHUB_API_TOKEN is not set.")
+    print("Please set it using: export HUGGINGFACEHUB_API_TOKEN='your_token_here'")
+    exit(1)
 
-chatbot = pipeline(
-    "text-generation",
-    model=MODEL_NAME,
-    max_new_tokens=120,
-    do_sample=True,
-    temperature=0.7
-)
+headers = {
+    "Authorization": f"Bearer {API_TOKEN}",
+    "Content-Type": "application/json"
+}
 
 def get_recommendation(segment_name, ecl_value, pd_value, lgd_value, avg_interest=8.5):
     """
-    Generates a short, formal credit-risk recommendation using a lightweight
-    Hugging Face model. Runs fully offline on Spaces.
+    Generate credit-risk recommendations via Hugging Face router inference API.
     """
 
-    prompt = f"""
-    You are a financial risk analyst at a digital bank.
-    Analyze the following loan segment:
+    prompt = f"""You are a credit risk analyst. Analyze the following segment and provide a formal, 2-sentence recommendation.
 
-    Segment: {segment_name}
-    Expected Credit Loss (ECL): {ecl_value:.2f}
-    Probability of Default (PD): {pd_value:.2%}
-    Loss Given Default (LGD): {lgd_value:.2%}
-    Average Interest Rate: {avg_interest:.2f}%
+Segment: {segment_name}
+Expected Credit Loss (ECL): {ecl_value:.2f}
+Probability of Default (PD): {pd_value:.2%}
+Loss Given Default (LGD): {lgd_value:.2%}
+Average Interest Rate: {avg_interest:.2f}%
 
-    Based on these values, briefly recommend one of the following:
-    1. Increase interest rate to offset higher risk.
-    2. Reduce new loan disbursements to this segment.
-    3. Maintain current policy if risk is acceptable.
+Recommend one:
+1. Increase interest rate
+2. Reduce new disbursements
+3. Maintain current policy
 
-    Provide reasoning in 2 concise sentences.
-    """
+Provide reasoning briefly."""
 
-    # Generate a short text
-    response = chatbot(prompt, max_new_tokens=100)
-    text = response[0]["generated_text"]
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "max_tokens": 150,
+        "temperature": 0.6
+    }
 
-    # Trim duplicated prompt (model tends to echo input)
-    if text.startswith(prompt):
-        text = text[len(prompt):].strip()
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
+        response.raise_for_status()
+        data = response.json()
 
-    return text.strip() or "No recommendation generated."
+        # Extract the response from OpenAI-compatible format
+        if "choices" in data and len(data["choices"]) > 0:
+            message = data["choices"][0].get("message", {})
+            content = message.get("content", "")
+            return content.strip()
+
+        return str(data)
+
+    except requests.exceptions.HTTPError as e:
+        return f"⚠️ API request failed: {e}\nResponse: {response.text}"
+    except requests.exceptions.RequestException as e:
+        return f"⚠️ API request failed: {e}"
