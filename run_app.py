@@ -19,7 +19,7 @@ from ecl_calculator import calculate_ecl
 from visualization import plot_ecl_curve
 from chat_module import get_recommendation
 from auth_module import login_ui, current_user
-from storage import save_ecl_results, load_all_results  # ✅ new for saving/viewing history
+from storage import save_ecl_results, load_all_results  # ✅ save/view history
 
 # -------------------------------------------------------
 # Streamlit Page Config
@@ -61,10 +61,24 @@ if uploaded_file is not None:
     st.subheader("📋 Raw Data Preview")
     st.dataframe(st.session_state.raw_df.head())
 
+    # -------------------------------------------------------
+    # Role-based Segmentation Options
+    # -------------------------------------------------------
     st.subheader("🔍 ECL Analysis Setup")
-    segment_col = st.selectbox(
-        "Select a column to segment users by:", st.session_state.cleaned_df.columns
-    )
+
+    if user["role"] == "cro":
+        segment_cols = st.multiselect(
+            "Select one or more columns to segment users by:",
+            st.session_state.cleaned_df.columns,
+            default=["loan_intent"]
+        )
+    else:
+        segment_cols = [
+            st.selectbox(
+                "Select a single column to segment users by:",
+                st.session_state.cleaned_df.columns
+            )
+        ]
 
     cro_only = (user["role"] == "cro")
 
@@ -74,7 +88,7 @@ if uploaded_file is not None:
     if st.button("📊 Calculate ECL"):
         with st.spinner("⚙️ Calculating Expected Credit Loss (ECL)..."):
             try:
-                ecl_df = calculate_ecl(st.session_state.cleaned_df, segment_col)
+                ecl_df = calculate_ecl(st.session_state.cleaned_df, segment_cols)
                 st.session_state.ecl_df = ecl_df
                 st.success("✅ ECL Calculation Completed!")
 
@@ -82,7 +96,7 @@ if uploaded_file is not None:
                 save_ecl_results(
                     username=user["username"],
                     role=user["role"],
-                    segment_col=segment_col,
+                    segment_col=", ".join(segment_cols),
                     ecl_df=ecl_df
                 )
                 st.info("📁 Results saved to history.")
@@ -102,7 +116,7 @@ if uploaded_file is not None:
 
         st.subheader("📉 ECL Curve Visualization")
         try:
-            fig = plot_ecl_curve(ecl_df, f"ECL by {segment_col.title()}")
+            fig = plot_ecl_curve(ecl_df, f"ECL by {', '.join(segment_cols).title()}")
             st.pyplot(fig)
         except Exception as e:
             st.error(f"⚠️ Plotting failed: {e}")
@@ -112,7 +126,7 @@ if uploaded_file is not None:
         st.download_button(
             "💾 Download ECL Results as CSV",
             data=csv,
-            file_name=f"ecl_results_by_{segment_col}.csv",
+            file_name=f"ecl_results_by_{'_'.join(segment_cols)}.csv",
             mime="text/csv",
         )
 
@@ -148,7 +162,7 @@ if uploaded_file is not None:
                 st.write(st.session_state.recommendation)
 
         # -------------------------------------------------------
-        # CRO Policy Actions
+        # CRO-Only Features
         # -------------------------------------------------------
         if cro_only:
             st.markdown("---")
@@ -160,37 +174,79 @@ if uploaded_file is not None:
             )
             if st.button("Apply Action"):
                 st.success(f"📘 Policy action '{action}' recorded for segment {segment_selected}.")
-        else:
-            st.info("Only CRO users can record policy actions in this demo.")
 
-    # -------------------------------------------------------
-    # CRO View All User Submissions
-    # -------------------------------------------------------
-    if cro_only:
-        st.markdown("---")
-        st.subheader("📜 View All User Submissions")
+            # -------------------------------------------------------
+            # CRO: View All Saved Results
+            # -------------------------------------------------------
+            st.markdown("---")
+            st.subheader("📜 View All User Submissions")
 
-        history_df = load_all_results()
-        if history_df.empty:
-            st.info("No ECL results have been saved yet.")
-        else:
-            st.dataframe(history_df)
+            history_df = load_all_results()
+            if history_df.empty:
+                st.info("No ECL results have been saved yet.")
+            else:
+                st.dataframe(history_df)
 
-            selected_user = st.selectbox(
-                "Filter by user (optional):",
-                ["All"] + list(history_df["username"].unique())
+                selected_user = st.selectbox(
+                    "Filter by user (optional):",
+                    ["All"] + list(history_df["username"].unique())
+                )
+
+                if selected_user != "All":
+                    filtered_df = history_df[history_df["username"] == selected_user]
+                    st.dataframe(filtered_df)
+
+                csv_data = history_df.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    "💾 Download All Results (CSV)",
+                    data=csv_data,
+                    file_name="all_ecl_history.csv"
+                )
+
+            # -------------------------------------------------------
+            # CRO: Combine Segments Feature
+            # -------------------------------------------------------
+            st.markdown("---")
+            st.subheader("🧮 Combine Segments for Aggregated ECL")
+
+            selected_segments = st.multiselect(
+                "Select multiple segments to combine:",
+                ecl_df["Segment"].unique()
             )
 
-            if selected_user != "All":
-                filtered_df = history_df[history_df["username"] == selected_user]
-                st.dataframe(filtered_df)
+            if selected_segments:
+                combined_df = ecl_df[ecl_df["Segment"].isin(selected_segments)]
+                total_loans = combined_df["Total Loans"].sum()
+                weighted_ecl = (combined_df["ECL"] * combined_df["Total Loans"]).sum() / total_loans
+                weighted_pd = (combined_df["PD"] * combined_df["Total Loans"]).sum() / total_loans
+                weighted_lgd = (combined_df["LGD"] * combined_df["Total Loans"]).sum() / total_loans
+                avg_ead = combined_df["EAD"].mean()
 
-            csv_data = history_df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "💾 Download All Results (CSV)",
-                data=csv_data,
-                file_name="all_ecl_history.csv"
-            )
+                st.markdown("### 📊 Combined Segment ECL Summary")
+                st.write(pd.DataFrame([{
+                    "Combined Segments": ", ".join(selected_segments),
+                    "Total Loans": total_loans,
+                    "Weighted PD": round(weighted_pd, 4),
+                    "Weighted LGD": round(weighted_lgd, 4),
+                    "Average EAD": round(avg_ead, 2),
+                    "Weighted ECL": round(weighted_ecl, 2)
+                }]))
 
+                # AI analysis for combined group
+                if st.button("🧠 Get Combined AI Recommendation"):
+                    with st.spinner("Analyzing combined segments with AI..."):
+                        suggestion = get_recommendation(
+                            segment_name=", ".join(selected_segments),
+                            ecl_value=weighted_ecl,
+                            pd_value=weighted_pd,
+                            lgd_value=weighted_lgd
+                        )
+                        st.session_state.combined_recommendation = suggestion
+
+                if "combined_recommendation" in st.session_state:
+                    st.markdown("### 💡 AI Recommendation for Combined Segments:")
+                    st.write(st.session_state.combined_recommendation)
+
+           
 else:
     st.info("👆 Please upload your dataset to start the analysis.")
