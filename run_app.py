@@ -19,6 +19,7 @@ from ecl_calculator import calculate_ecl
 from visualization import plot_ecl_curve
 from chat_module import get_recommendation
 from auth_module import login_ui, current_user
+from storage import save_ecl_results, load_all_results  # ✅ new for saving/viewing history
 
 # -------------------------------------------------------
 # Streamlit Page Config
@@ -67,16 +68,32 @@ if uploaded_file is not None:
 
     cro_only = (user["role"] == "cro")
 
+    # -------------------------------------------------------
+    # ECL Calculation
+    # -------------------------------------------------------
     if st.button("📊 Calculate ECL"):
         with st.spinner("⚙️ Calculating Expected Credit Loss (ECL)..."):
             try:
                 ecl_df = calculate_ecl(st.session_state.cleaned_df, segment_col)
                 st.session_state.ecl_df = ecl_df
                 st.success("✅ ECL Calculation Completed!")
+
+                # ✅ Save results for this user
+                save_ecl_results(
+                    username=user["username"],
+                    role=user["role"],
+                    segment_col=segment_col,
+                    ecl_df=ecl_df
+                )
+                st.info("📁 Results saved to history.")
+
             except Exception as e:
                 st.error(f"❌ ECL calculation failed: {type(e).__name__}: {e}")
                 st.stop()
 
+    # -------------------------------------------------------
+    # Display Results + Visualization
+    # -------------------------------------------------------
     if st.session_state.get("ecl_df") is not None:
         ecl_df = st.session_state.ecl_df
 
@@ -90,6 +107,7 @@ if uploaded_file is not None:
         except Exception as e:
             st.error(f"⚠️ Plotting failed: {e}")
 
+        # Download button
         csv = ecl_df.to_csv(index=False).encode("utf-8")
         st.download_button(
             "💾 Download ECL Results as CSV",
@@ -98,9 +116,9 @@ if uploaded_file is not None:
             mime="text/csv",
         )
 
-        # -------------------------------------------
-        # AI RECOMMENDATIONS
-        # -------------------------------------------
+        # -------------------------------------------------------
+        # AI Recommendations Section
+        # -------------------------------------------------------
         st.subheader("🤖 AI-Powered Recommendations")
 
         if "Segment" not in ecl_df.columns:
@@ -129,9 +147,9 @@ if uploaded_file is not None:
                 st.markdown("### 💡 Model Suggestion:")
                 st.write(st.session_state.recommendation)
 
-        # -------------------------------------------
-        # CRO Role-Based Policy Actions
-        # -------------------------------------------
+        # -------------------------------------------------------
+        # CRO Policy Actions
+        # -------------------------------------------------------
         if cro_only:
             st.markdown("---")
             st.subheader("🔐 CRO Policy Actions")
@@ -144,6 +162,35 @@ if uploaded_file is not None:
                 st.success(f"📘 Policy action '{action}' recorded for segment {segment_selected}.")
         else:
             st.info("Only CRO users can record policy actions in this demo.")
+
+    # -------------------------------------------------------
+    # CRO View All User Submissions
+    # -------------------------------------------------------
+    if cro_only:
+        st.markdown("---")
+        st.subheader("📜 View All User Submissions")
+
+        history_df = load_all_results()
+        if history_df.empty:
+            st.info("No ECL results have been saved yet.")
+        else:
+            st.dataframe(history_df)
+
+            selected_user = st.selectbox(
+                "Filter by user (optional):",
+                ["All"] + list(history_df["username"].unique())
+            )
+
+            if selected_user != "All":
+                filtered_df = history_df[history_df["username"] == selected_user]
+                st.dataframe(filtered_df)
+
+            csv_data = history_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "💾 Download All Results (CSV)",
+                data=csv_data,
+                file_name="all_ecl_history.csv"
+            )
 
 else:
     st.info("👆 Please upload your dataset to start the analysis.")
